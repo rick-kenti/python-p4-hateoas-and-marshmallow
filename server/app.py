@@ -7,116 +7,106 @@ from flask_restful import Api, Resource
 
 from models import db, Newsletter
 
+# ---------------------------
+# App Setup
+# ---------------------------
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///newsletters.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.json.compact = False
 
-migrate = Migrate(app, db)
+# Database and migrations
 db.init_app(app)
+migrate = Migrate(app, db)
 
+# Marshmallow
+ma = Marshmallow(app)
+
+# Flask-RESTful API
 api = Api(app)
 
+# ---------------------------
+# Marshmallow Schema
+# ---------------------------
+class NewsletterSchema(ma.SQLAlchemySchema):
+    class Meta:
+        model = Newsletter
+        load_instance = True  # optional: allows JSON -> object
+
+    title = ma.auto_field()
+    published_at = ma.auto_field()
+
+    url = ma.Hyperlinks({
+        "self": ma.URLFor("newsletterbyid", values=dict(id="<id>")),
+        "collection": ma.URLFor("newsletters")
+    })
+
+# Schema instances
+newsletter_schema = NewsletterSchema()          # single item
+newsletters_schema = NewsletterSchema(many=True) # multiple items
+
+# ---------------------------
+# Resources
+# ---------------------------
 class Index(Resource):
-
     def get(self):
-        
         response_dict = {
-            "index": "Welcome to the Newsletter RESTful API",
+            "index": "Welcome to the Newsletter RESTful API"
         }
-        
-        response = make_response(
-            response_dict,
-            200,
-        )
+        return make_response(response_dict, 200)
 
-        return response
-
-api.add_resource(Index, '/')
-
+# All newsletters
 class Newsletters(Resource):
-
     def get(self):
-        
-        response_dict_list = [n.to_dict() for n in Newsletter.query.all()]
-
-        response = make_response(
-            response_dict_list,
-            200,
-        )
-
-        return response
+        newsletters = Newsletter.query.all()
+        return make_response(newsletters_schema.dump(newsletters), 200)
 
     def post(self):
-        
-        new_record = Newsletter(
+        new_newsletter = Newsletter(
             title=request.form['title'],
-            body=request.form['body'],
+            body=request.form['body']
         )
-
-        db.session.add(new_record)
+        db.session.add(new_newsletter)
         db.session.commit()
+        return make_response(newsletter_schema.dump(new_newsletter), 201)
 
-        response_dict = new_record.to_dict()
-
-        response = make_response(
-            response_dict,
-            201,
-        )
-
-        return response
-
-api.add_resource(Newsletters, '/newsletters')
-
+# Single newsletter by ID
 class NewsletterByID(Resource):
-
     def get(self, id):
-
-        response_dict = Newsletter.query.filter_by(id=id).first().to_dict()
-
-        response = make_response(
-            response_dict,
-            200,
-        )
-
-        return response
+        newsletter = Newsletter.query.filter_by(id=id).first()
+        if not newsletter:
+            return make_response({"message": "Newsletter not found"}, 404)
+        return make_response(newsletter_schema.dump(newsletter), 200)
 
     def patch(self, id):
+        newsletter = Newsletter.query.filter_by(id=id).first()
+        if not newsletter:
+            return make_response({"message": "Newsletter not found"}, 404)
 
-        record = Newsletter.query.filter_by(id=id).first()
         for attr in request.form:
-            setattr(record, attr, request.form[attr])
-
-        db.session.add(record)
+            setattr(newsletter, attr, request.form[attr])
         db.session.commit()
 
-        response_dict = record.to_dict()
-
-        response = make_response(
-            response_dict,
-            200
-        )
-
-        return response
+        return make_response(newsletter_schema.dump(newsletter), 200)
 
     def delete(self, id):
+        newsletter = Newsletter.query.filter_by(id=id).first()
+        if not newsletter:
+            return make_response({"message": "Newsletter not found"}, 404)
 
-        record = Newsletter.query.filter_by(id=id).first()
-        
-        db.session.delete(record)
+        db.session.delete(newsletter)
         db.session.commit()
+        return make_response({"message": "record successfully deleted"}, 200)
 
-        response_dict = {"message": "record successfully deleted"}
-
-        response = make_response(
-            response_dict,
-            200
-        )
-
-        return response
-
+# ---------------------------
+# Routes
+# ---------------------------
+api.add_resource(Index, '/')
+api.add_resource(Newsletters, '/newsletters')
 api.add_resource(NewsletterByID, '/newsletters/<int:id>')
 
-
+# ---------------------------
+# Run server
+# ---------------------------
 if __name__ == '__main__':
     app.run(port=5555, debug=True)
